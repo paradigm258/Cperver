@@ -1,23 +1,48 @@
 #include "Response.hpp"
 
+#include <ctime>
+
 Response::Response()
 {
-    status += HTTP_VER" ";
-    status += HTTP_STATUS_OK;
+    //Set default status
+    http_ver = HTTP_VER " ";
+    status = HTTP_STATUS_OK "\r\n";
+    //Set date header with current time
+    std::time_t time = std::time(0);
+    tm time_tm;
+    gmtime_s(&time_tm, &time);
+    char buff[128];
+    strftime(buff, 128, "%a, %d %b %Y %H:%M:%S GMT", &time_tm);
+    headers["Date"] = std::string(buff);
 }
 
-std::string Response::getRawResponse() const
+std::string Response::getStatusLine()
 {
-    std::string rResponse = "HTTP/1.1 200 OK\n"
-                        "Date: Thu, 19 Feb 2009 12:27:04 GMT\n"
-                        "Server: Apache/2.2.3\n"
-                        "Last-Modified: Wed, 18 Jun 2003 16:05:58 GMT\n"
-                        "ETag: \"56d-9989200-1132c580\"\n"
-                        "Content-Type: text/html\n"
-                        "Content-Length: 15\n"
-                        "Accept-Ranges: bytes\n"
-                        "Connection: close\n"
-                        "\n"
-                        "sdfkjsdnbfkjbsf";
-    return rResponse;
+    return http_ver + status;
+}
+
+std::stringstream &Response::getContentStream()
+{
+    return content;
+}
+
+void Response::setHeader(const std::string &hName, const std::string &hValue)
+{
+    headers[hName] = hValue;
+}
+
+std::string Response::getHeader(const std::string &hName)
+{
+    return headers[hName];
+}
+
+void Response::writeContent(const std::string &newContent)
+{
+    content << newContent;
+    headers["Content-Lenght"] = std::to_string(content.tellp());
+}
+
+const std::map<std::string, std::string> &Response::getHeaders()
+{
+    return headers;
 }

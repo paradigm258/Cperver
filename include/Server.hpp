@@ -4,26 +4,26 @@
 #include <WinSock2.h>
 #include <Windows.h>
 
-#include <iostream>
 #include <map>
 #include <string>
-#include <vector>
 #include <queue>
 #include <thread>
-#include <future>
+#include <mutex>
+#include <condition_variable>
 
 #include <time.h>
-#include <stdio.h>
 
 #include "Response.hpp"
 #include "Request.hpp"
-#include "HttpUtil.hpp"
+#include "CperverPage.hpp"
 
 #define DEFAULT_PORT "20715"
 #define BUFLEN 1024
-#define POOLSIZE 2
+#define POOLSIZE 8
 #define INIT_SUCCESS 0
 #define MAXTIMEOUT 2000 //ms
+
+typedef CperverPage *(*FCreate)();
 
 class Server
 {
@@ -37,16 +37,16 @@ private:
   std::mutex mtx;
   std::condition_variable cv;
   std::queue<SOCKET> tasks;
-  void Error(std::string const &, int);
-  Request recvRequest(SOCKET);
-  bool sendResponse(SOCKET, Response const &);
-  bool checkEndRequest(std::string const &);
+  void Error(const std::string &, int);
+  Request recvRequest(const SOCKET);
+  bool sendResponse(const SOCKET, Response &);
+  bool checkEndRequest(const std::string &);
   void ClearScreen();
   void serverCallback();
-  void threadCallback();
+  void handlerThreadCallback();
   bool ready(SOCKET);
   void cleanup();
-  std::function<void(Request &, Response &)> getRequestCallbackHandler(Request &);
+  CperverPage *getCperverPageHandler(HMODULE, Request &);
 
 public:
   Server();

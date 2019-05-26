@@ -135,6 +135,7 @@
     <ClCompile Include="src\Server.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="include\CperverPage.hpp" />
     <ClInclude Include="include\HttpUtil.hpp" />
     <ClInclude Include="include\Request.hpp" />
     <ClInclude Include="include\Response.hpp" />

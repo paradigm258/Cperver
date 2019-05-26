@@ -1,11 +1,16 @@
 #include "Server.hpp"
+
+#include <iostream>
 int main()
 {
     Server server;
-    if (server.Init() == INIT_SUCCESS){
+    if (server.Init() == INIT_SUCCESS)
+    {
         server.Start();
-    }else {
-        std::cout<<"Init failed"<<std::endl;
+    }
+    else
+    {
+        std::cout << "Init failed" << std::endl;
     }
     return EXIT_SUCCESS;
 }

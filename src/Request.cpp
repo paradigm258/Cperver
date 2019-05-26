@@ -1,5 +1,9 @@
 #include "Request.hpp"
 
+#include <iostream>
+#include <sstream>
+#include <vector>
+
 Request::Request(std::string const &sRequest)
 {
     std::istringstream inputStream(sRequest);
@@ -14,23 +18,28 @@ Request::Request(std::string const &sRequest)
     method = lines[0].substr(lines[0].find_first_of(' '));
     url = lines[0].substr(lines[0].find_first_of(' '), lines[0].find_last_of(' '));
     //Get headers
-    for (int i = 0; i < lines.size(); i++)
+    for (size_t i = 0; i < lines.size(); i++)
     {
-        int colonIndex = lines[i].find_first_of(':');
-        if(colonIndex == std::string::npos) continue;
-        std::string header = lines[i].substr(0,colonIndex);
-        std::string value = lines[i].substr(colonIndex,lines[i].length());
-        headers[header]=value;
+        auto colonIndex = lines[i].find_first_of(':');
+        if (colonIndex == std::string::npos)
+            continue;
+        std::string header = lines[i].substr(0, colonIndex);
+        std::string value = lines[i].substr(colonIndex, lines[i].length());
+        headers[header] = value;
     }
 }
 
-std::string Request::getHeader(std::string const & header)
+std::string Request::getHeader(std::string const &header)
 {
-    std::string a = headers[header];
-    return a;
+    return headers[header];
 }
 
 std::string Request::getMethod()
 {
     return method;
+}
+
+std::string Request::getParameter(std::string const &)
+{
+    return std::string();
 }

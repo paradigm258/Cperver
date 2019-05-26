@@ -1,5 +1,7 @@
+#include <iostream>
+
 #include "Server.hpp"
-#include <thread>
+
 Server::Server()
 {
     ZeroMemory(&wsaData, sizeof(wsaData));
@@ -11,7 +13,7 @@ Server::Server()
 
 void Server::Error(std::string const &err, int code)
 {
-    std::cout << err << " failed: " << code << "\n";
+    std::cerr << err << " failed: " << code << "\n";
 }
 
 int Server::Init()
@@ -25,7 +27,7 @@ int Server::Init()
     }
 
     //Set up data for port
-    struct addrinfo *result = nullptr, hint;
+    addrinfo *result = nullptr, hint;
 
     //Set hint as connection option
     ZeroMemory(&hint, sizeof(hint)); //Zero out hint
@@ -85,7 +87,7 @@ int Server::Start()
     std::thread threadPool[poolSize];
     for (int i = 0; i < poolSize; i++)
     {
-        threadPool[i] = std::thread(&Server::threadCallback, this);
+        threadPool[i] = std::thread(&Server::handlerThreadCallback, this);
     }
 
     while (running)
@@ -94,7 +96,7 @@ int Server::Start()
         std::getline(std::cin, a);
         if (a == "quit")
         {
-            std::unique_lock<std::mutex> l(mtx);
+            std::lock_guard<std::mutex> l(mtx);
             running = false;
             cv.notify_all();
         }
@@ -104,24 +106,25 @@ int Server::Start()
         }
     }
     requestHandler.join();
-    threadPool[0].join();
-    threadPool[1].join();
+    for (int i = 0; i < poolSize; i++)
+    {
+        threadPool[i].join();
+    }
     cleanup();
     if (WSACleanup() == SOCKET_ERROR)
     {
         Error("WSACleanup", WSAGetLastError());
     }
-    std::cout << "Here" << std::endl;
-    return EXIT_SUCCESS;
+    return 0;
 }
 
 void Server::cleanup()
 {
     while (!tasks.empty())
     {
-        if(closesocket(tasks.front())==SOCKET_ERROR)
+        if (closesocket(tasks.front()) == SOCKET_ERROR)
         {
-            Error("closesocket",WSAGetLastError());
+            Error("closesocket", WSAGetLastError());
         };
         tasks.pop();
     }
@@ -166,11 +169,13 @@ void Server::ClearScreen()
     SetConsoleCursorPosition(hStdOut, homeCoords);
 }
 
-void Server::threadCallback()
+void Server::handlerThreadCallback()
 {
     while (running)
     {
+        //Create lock and lock mutex
         std::unique_lock<std::mutex> l(mtx);
+        //Wait for lock then for either a stop signal or an available task
         cv.wait(l, [this]() { return !running || !tasks.empty(); });
         if (!running)
         {
@@ -178,21 +183,32 @@ void Server::threadCallback()
             l.unlock();
             continue;
         }
+        //Get Client Socket from queue
         SOCKET ClientSocket = std::move(tasks.front());
         tasks.pop();
+        //Unlock lock early after obtain client socket
+        l.unlock();
+        //Try to receive request from client socket and then response to client
         try
         {
-            std::cout << std::this_thread::get_id();
-            std::cout << std::endl;
-            // Request request = recvRequest(ClientSocket);
+            Request request = recvRequest(ClientSocket);
+            Response response;
+            //Load Page callback from dll
+            HMODULE hDLL = NULL;
+            CperverPage *fCallback = getCperverPageHandler(hDLL, request);
+            if (fCallback != nullptr)
+            {
+                fCallback->handleRequest(request, response);
+                delete fCallback;
+            }
+            FreeLibrary(hDLL);
+            //Send handled response
+            sendResponse(ClientSocket, response);
         }
         catch (const char *msg)
         {
             Error(msg, 0);
         }
-        l.unlock();
-        Response response;
-        sendResponse(ClientSocket, response);
         closesocket(ClientSocket);
     }
 }
@@ -213,8 +229,8 @@ void Server::serverCallback()
             {
                 l.lock();
                 tasks.push(ClientSocket);
-                cv.notify_all();
                 l.unlock();
+                cv.notify_all();
             }
         }
     }
@@ -223,12 +239,11 @@ void Server::serverCallback()
         Error("closesocket", WSAGetLastError());
     };
 }
-Request Server::recvRequest(SOCKET ClientSocket)
+Request Server::recvRequest(const SOCKET ClientSocket)
 {
     char buf[BUFLEN] = {0};
     std::string sRequest;
     int iResult = 0;
-    clock_t expireTime = clock() + 6000;
     bool requestEnded = false;
     do
     {
@@ -243,12 +258,20 @@ Request Server::recvRequest(SOCKET ClientSocket)
             sRequest.append(buf, iResult);
             requestEnded = checkEndRequest(sRequest);
         }
-    } while (!requestEnded && clock() < expireTime);
-    std::cout << "--------Start--------\n"
+        else
+        {
+            Error("Timeout", timeOutDuration.tv_sec);
+            break;
+        }
+
+    } while (!requestEnded);
+    std::cout << "Thread id: " << std::this_thread::get_id() << "\n"
+              << "--------Start--------\n"
               << sRequest
               << "---------End---------\n"
               << "Result: " << iResult << "\n"
               << (requestEnded ? "got it" : "timeout")
+              << "\n"
               << std::endl;
     if (requestEnded)
     {
@@ -257,17 +280,37 @@ Request Server::recvRequest(SOCKET ClientSocket)
     else
         throw "Invalid Request";
 }
-bool Server::sendResponse(SOCKET ClientSocket, Response const &response)
+bool Server::sendResponse(const SOCKET ClientSocket, Response &response)
 {
-    std::string reply = response.getRawResponse();
-
-    int iResult = send(ClientSocket, reply.c_str(), (int)reply.size(), 0);
+    int iResult = 0;
+    //Send status line
+    iResult = send(ClientSocket, response.getStatusLine().c_str(), response.getStatusLine().size(), 0);
+    //Prepare and send headers
+    const auto &headers = response.getHeaders();
+    for (const auto &header : headers)
+    {
+        std::string buf = header.first + ": " + header.second + "\n";
+        iResult = send(ClientSocket, buf.c_str(), buf.size(), 0);
+    }
+    //Line seperate between headers and body
+    iResult = send(ClientSocket, "\n", 1, 0);
+    //Send content stream
+    auto &contentStream = response.getContentStream();
+    while (contentStream)
+    {
+        char buff[128] = {0};
+        contentStream.read(buff, 128);
+        iResult = send(ClientSocket, buff, contentStream.gcount(), 0);
+    }
     return iResult > 0;
 }
-bool Server::checkEndRequest(std::string const &sRequest)
+bool Server::checkEndRequest(const std::string &sRequest)
 {
     if (sRequest.length() > 4)
-        return sRequest.compare(sRequest.size() - 4, 4, END_OF_REQUEST) == 0;
+    {
+        bool isPost = !strcmp(sRequest.substr(0, 4).c_str(), "POST");
+        return sRequest.compare(sRequest.size() - 4, 4, isPost ? END_POST : END_GET) == 0;
+    }
     else
         return false;
 }
@@ -278,10 +321,20 @@ bool Server::ready(SOCKET sock)
     FD_SET(sock, &fds);
     return (select((int)sock + 1, &fds, NULL, NULL, &timeOutDuration) == 1);
 }
-void hand(Request &req, Response &res)
+
+CperverPage *Server::getCperverPageHandler(HMODULE hDll, Request &req)
 {
-}
-std::function<void(Request &req, Response &res)> Server::getRequestCallbackHandler(Request &req)
-{
-    return hand;
+    hDll = LoadLibrary("MyPage.dll");
+    if (!hDll)
+    {
+        Error("Load dll", GetLastError());
+        throw "a";
+    }
+    FCreate CreateCperverPage = (FCreate)GetProcAddress(hDll, "CreateCperverPage");
+    if (!CreateCperverPage)
+    {
+        Error("Get Page", GetLastError());
+        throw "a";
+    }
+    return CreateCperverPage();
 }
